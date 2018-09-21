@@ -59,7 +59,6 @@ public class TestPipelineStats
 
             new Duration(10, NANOSECONDS),
             new Duration(11, NANOSECONDS),
-            new Duration(12, NANOSECONDS),
             new Duration(13, NANOSECONDS),
             false,
             ImmutableSet.of(),
@@ -105,7 +104,7 @@ public class TestPipelineStats
         assertEquals(actual.getBlockedDrivers(), 19);
         assertEquals(actual.getCompletedDrivers(), 4);
 
-        assertEquals(actual.getMemoryReservation(), new DataSize(5, BYTE));
+        assertEquals(actual.getUserMemoryReservation(), new DataSize(5, BYTE));
         assertEquals(actual.getRevocableMemoryReservation(), new DataSize(6, BYTE));
         assertEquals(actual.getSystemMemoryReservation(), new DataSize(7, BYTE));
 
@@ -114,7 +113,6 @@ public class TestPipelineStats
 
         assertEquals(actual.getTotalScheduledTime(), new Duration(10, NANOSECONDS));
         assertEquals(actual.getTotalCpuTime(), new Duration(11, NANOSECONDS));
-        assertEquals(actual.getTotalUserTime(), new Duration(12, NANOSECONDS));
         assertEquals(actual.getTotalBlockedTime(), new Duration(13, NANOSECONDS));
 
         assertEquals(actual.getRawInputDataSize(), new DataSize(14, BYTE));

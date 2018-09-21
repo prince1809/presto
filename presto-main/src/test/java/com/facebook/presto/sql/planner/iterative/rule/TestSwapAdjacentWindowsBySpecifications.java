@@ -46,8 +46,15 @@ public class TestSwapAdjacentWindowsBySpecifications
 
     public TestSwapAdjacentWindowsBySpecifications()
     {
-        frame = new WindowNode.Frame(WindowFrame.Type.RANGE, UNBOUNDED_PRECEDING,
-                Optional.empty(), CURRENT_ROW, Optional.empty());
+        frame = new WindowNode.Frame(
+                WindowFrame.Type.RANGE,
+                UNBOUNDED_PRECEDING,
+                Optional.empty(),
+                CURRENT_ROW,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
+
         signature = new Signature(
                 "avg",
                 FunctionKind.WINDOW,
@@ -72,8 +79,7 @@ public class TestSwapAdjacentWindowsBySpecifications
         tester().assertThat(new GatherAndMergeWindows.SwapAdjacentWindowsBySpecifications(0))
                 .on(p -> p.window(new WindowNode.Specification(
                                 ImmutableList.of(p.symbol("a")),
-                                ImmutableList.of(),
-                                ImmutableMap.of()),
+                                Optional.empty()),
                         ImmutableMap.of(p.symbol("avg_1"),
                                 new WindowNode.Function(new FunctionCall(QualifiedName.of("avg"), ImmutableList.of()), signature, frame)),
                         p.values(p.symbol("a"))))
@@ -96,14 +102,12 @@ public class TestSwapAdjacentWindowsBySpecifications
                 .on(p ->
                         p.window(new WindowNode.Specification(
                                         ImmutableList.of(p.symbol("a")),
-                                        ImmutableList.of(),
-                                        ImmutableMap.of()),
+                                        Optional.empty()),
                                 ImmutableMap.of(p.symbol("avg_1", DOUBLE),
                                         new WindowNode.Function(new FunctionCall(QualifiedName.of("avg"), windowA, false, ImmutableList.of(new SymbolReference("a"))), signature, frame)),
                                 p.window(new WindowNode.Specification(
                                                 ImmutableList.of(p.symbol("a"), p.symbol("b")),
-                                                ImmutableList.of(),
-                                                ImmutableMap.of()),
+                                                Optional.empty()),
                                         ImmutableMap.of(p.symbol("avg_2", DOUBLE),
                                                 new WindowNode.Function(new FunctionCall(QualifiedName.of("avg"), windowAB, false, ImmutableList.of(new SymbolReference("b"))), signature, frame)),
                                         p.values(p.symbol("a"), p.symbol("b")))))
@@ -126,14 +130,12 @@ public class TestSwapAdjacentWindowsBySpecifications
                 .on(p ->
                         p.window(new WindowNode.Specification(
                                         ImmutableList.of(p.symbol("a")),
-                                        ImmutableList.of(),
-                                        ImmutableMap.of()),
+                                        Optional.empty()),
                                 ImmutableMap.of(p.symbol("avg_1"),
                                         new WindowNode.Function(new FunctionCall(QualifiedName.of("avg"), windowA, false, ImmutableList.of(new SymbolReference("avg_2"))), signature, frame)),
                                 p.window(new WindowNode.Specification(
                                                 ImmutableList.of(p.symbol("a"), p.symbol("b")),
-                                                ImmutableList.of(),
-                                                ImmutableMap.of()),
+                                                Optional.empty()),
                                         ImmutableMap.of(p.symbol("avg_2"),
                                                 new WindowNode.Function(new FunctionCall(QualifiedName.of("avg"), windowA, false, ImmutableList.of(new SymbolReference("a"))), signature, frame)),
                                         p.values(p.symbol("a"), p.symbol("b")))))

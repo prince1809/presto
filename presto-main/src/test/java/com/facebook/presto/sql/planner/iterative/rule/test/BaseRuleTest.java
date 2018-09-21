@@ -13,30 +13,29 @@
  */
 package com.facebook.presto.sql.planner.iterative.rule.test;
 
+import com.facebook.presto.spi.Plugin;
+import com.google.common.collect.ImmutableList;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
+
+import java.util.List;
 
 import static io.airlift.testing.Closeables.closeAllRuntimeException;
 
 public abstract class BaseRuleTest
 {
-    private final boolean tpchPredicatePushdownEnabled;
     private RuleTester tester;
+    private List<Plugin> plugins;
 
-    protected BaseRuleTest()
+    public BaseRuleTest(Plugin... plugins)
     {
-        this(false);
-    }
-
-    protected BaseRuleTest(boolean tpchPredicatePushdownEnabled)
-    {
-        this.tpchPredicatePushdownEnabled = tpchPredicatePushdownEnabled;
+        this.plugins = ImmutableList.copyOf(plugins);
     }
 
     @BeforeClass
     public final void setUp()
     {
-        tester = new RuleTester(tpchPredicatePushdownEnabled);
+        tester = new RuleTester(plugins);
     }
 
     @AfterClass(alwaysRun = true)

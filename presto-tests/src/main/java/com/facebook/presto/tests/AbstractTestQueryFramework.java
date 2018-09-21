@@ -14,14 +14,20 @@
 package com.facebook.presto.tests;
 
 import com.facebook.presto.Session;
-import com.facebook.presto.cost.CoefficientBasedStatsCalculator;
-import com.facebook.presto.cost.StatsCalculator;
+import com.facebook.presto.cost.CostCalculator;
+import com.facebook.presto.cost.CostCalculatorUsingExchanges;
+import com.facebook.presto.cost.CostCalculatorWithEstimatedExchanges;
+import com.facebook.presto.cost.CostComparator;
+import com.facebook.presto.execution.QueryManagerConfig;
+import com.facebook.presto.execution.scheduler.NodeSchedulerConfig;
+import com.facebook.presto.metadata.InMemoryNodeManager;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.spi.security.AccessDeniedException;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.sql.analyzer.QueryExplainer;
 import com.facebook.presto.sql.parser.SqlParser;
+import com.facebook.presto.sql.planner.PlanFragmenter;
 import com.facebook.presto.sql.planner.PlanOptimizers;
 import com.facebook.presto.sql.planner.optimizations.PlanOptimizer;
 import com.facebook.presto.sql.tree.ExplainType;
@@ -61,7 +67,6 @@ public abstract class AbstractTestQueryFramework
     private QueryRunner queryRunner;
     private H2QueryRunner h2QueryRunner;
     private SqlParser sqlParser;
-    private StatsCalculator statsCalculator;
 
     protected AbstractTestQueryFramework(QueryRunnerSupplier supplier)
     {
@@ -75,7 +80,6 @@ public abstract class AbstractTestQueryFramework
         queryRunner = queryRunnerSupplier.get();
         h2QueryRunner = new H2QueryRunner();
         sqlParser = new SqlParser();
-        statsCalculator = new CoefficientBasedStatsCalculator(queryRunner.getMetadata());
     }
 
     @AfterClass(alwaysRun = true)
@@ -107,6 +111,11 @@ public abstract class AbstractTestQueryFramework
     protected MaterializedResult computeActual(Session session, @Language("SQL") String sql)
     {
         return queryRunner.execute(session, sql).toTestTypes();
+    }
+
+    protected Object computeScalar(@Language("SQL") String sql)
+    {
+        return computeActual(sql).getOnlyValue();
     }
 
     protected void assertQuery(@Language("SQL") String sql)
@@ -177,6 +186,11 @@ public abstract class AbstractTestQueryFramework
     protected void assertUpdate(Session session, @Language("SQL") String sql, long count)
     {
         QueryAssertions.assertUpdate(queryRunner, session, sql, OptionalLong.of(count));
+    }
+
+    protected void assertQuerySucceeds(Session session, @Language("SQL") String sql)
+    {
+        QueryAssertions.assertQuerySucceeds(queryRunner, session, sql);
     }
 
     protected void assertQueryFailsEventually(@Language("SQL") String sql, @Language("RegExp") String expectedMessageRegExp, Duration timeout)
@@ -306,14 +320,28 @@ public abstract class AbstractTestQueryFramework
         Metadata metadata = queryRunner.getMetadata();
         FeaturesConfig featuresConfig = new FeaturesConfig().setOptimizeHashGeneration(true);
         boolean forceSingleNode = queryRunner.getNodeCount() == 1;
-        List<PlanOptimizer> optimizers = new PlanOptimizers(metadata, sqlParser, featuresConfig, forceSingleNode, new MBeanExporter(new TestingMBeanServer())).get();
+        CostCalculator costCalculator = new CostCalculatorUsingExchanges(queryRunner::getNodeCount);
+        List<PlanOptimizer> optimizers = new PlanOptimizers(
+                metadata,
+                sqlParser,
+                featuresConfig,
+                forceSingleNode,
+                new MBeanExporter(new TestingMBeanServer()),
+                queryRunner.getStatsCalculator(),
+                costCalculator,
+                new CostCalculatorWithEstimatedExchanges(costCalculator, queryRunner::getNodeCount),
+                new CostComparator(featuresConfig)).get();
         return new QueryExplainer(
                 optimizers,
+                new PlanFragmenter(new QueryManagerConfig()),
                 metadata,
                 queryRunner.getNodePartitioningManager(),
                 queryRunner.getAccessControl(),
                 sqlParser,
-                statsCalculator,
+                queryRunner.getStatsCalculator(),
+                costCalculator,
+                new InMemoryNodeManager(),
+                new NodeSchedulerConfig().setIncludeCoordinator(true),
                 ImmutableMap.of());
     }
 

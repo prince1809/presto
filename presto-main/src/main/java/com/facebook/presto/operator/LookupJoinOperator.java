@@ -43,6 +43,7 @@ import static com.facebook.presto.operator.LookupJoinOperators.JoinType.FULL_OUT
 import static com.facebook.presto.operator.LookupJoinOperators.JoinType.PROBE_OUTER;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Verify.verify;
+import static io.airlift.concurrent.MoreFutures.addSuccessCallback;
 import static io.airlift.concurrent.MoreFutures.checkSuccess;
 import static io.airlift.concurrent.MoreFutures.getDone;
 import static java.lang.String.format;
@@ -53,10 +54,9 @@ public class LookupJoinOperator
         implements Operator
 {
     private final OperatorContext operatorContext;
-    private final List<Type> allTypes;
     private final List<Type> probeTypes;
     private final JoinProbeFactory joinProbeFactory;
-    private final Runnable onClose;
+    private final Runnable afterClose;
     private final OptionalInt lookupJoinsCount;
     private final HashGenerator hashGenerator;
     private final LookupSourceFactory lookupSourceFactory;
@@ -98,19 +98,17 @@ public class LookupJoinOperator
 
     public LookupJoinOperator(
             OperatorContext operatorContext,
-            List<Type> allTypes,
             List<Type> probeTypes,
             List<Type> buildOutputTypes,
             JoinType joinType,
             LookupSourceFactory lookupSourceFactory,
             JoinProbeFactory joinProbeFactory,
-            Runnable onClose,
+            Runnable afterClose,
             OptionalInt lookupJoinsCount,
             HashGenerator hashGenerator,
             PartitioningSpillerFactory partitioningSpillerFactory)
     {
         this.operatorContext = requireNonNull(operatorContext, "operatorContext is null");
-        this.allTypes = ImmutableList.copyOf(requireNonNull(allTypes, "allTypes is null"));
         this.probeTypes = ImmutableList.copyOf(requireNonNull(probeTypes, "probeTypes is null"));
 
         requireNonNull(joinType, "joinType is null");
@@ -118,7 +116,7 @@ public class LookupJoinOperator
         probeOnOuterSide = joinType == PROBE_OUTER || joinType == FULL_OUTER;
 
         this.joinProbeFactory = requireNonNull(joinProbeFactory, "joinProbeFactory is null");
-        this.onClose = requireNonNull(onClose, "onClose is null");
+        this.afterClose = requireNonNull(afterClose, "afterClose is null");
         this.lookupJoinsCount = requireNonNull(lookupJoinsCount, "lookupJoinsCount is null");
         this.hashGenerator = requireNonNull(hashGenerator, "hashGenerator is null");
         this.lookupSourceFactory = requireNonNull(lookupSourceFactory, "lookupSourceFactory is null");
@@ -135,12 +133,6 @@ public class LookupJoinOperator
     public OperatorContext getOperatorContext()
     {
         return operatorContext;
-    }
-
-    @Override
-    public List<Type> getTypes()
-    {
-        return allTypes;
     }
 
     @Override
@@ -180,6 +172,10 @@ public class LookupJoinOperator
         if (unspilledLookupSource.isPresent()) {
             // Unspilling can happen only after lookupSourceProviderFuture was done.
             return unspilledLookupSource.get();
+        }
+
+        if (finishing) {
+            return NOT_BLOCKED;
         }
 
         return lookupSourceProviderFuture;
@@ -283,7 +279,14 @@ public class LookupJoinOperator
         }
 
         if (!tryFetchLookupSourceProvider()) {
-            return null;
+            if (!finishing) {
+                return null;
+            }
+
+            verify(finishing);
+            // We are no longer interested in the build side (the lookupSourceProviderFuture's value).
+            addSuccessCallback(lookupSourceProviderFuture, LookupSourceProvider::close);
+            lookupSourceProvider = new StaticLookupSourceProvider(new EmptyLookupSource());
         }
 
         if (probe == null && finishing && !unspilling) {
@@ -507,10 +510,13 @@ public class LookupJoinOperator
         probe = null;
 
         try (Closer closer = Closer.create()) {
+            // `afterClose` must be run last.
+            // Closer is documented to mimic try-with-resource, which implies close will happen in reverse order.
+            closer.register(afterClose::run);
+
             closer.register(pageBuilder::reset);
             closer.register(() -> Optional.ofNullable(lookupSourceProvider).ifPresent(LookupSourceProvider::close));
             spiller.ifPresent(closer::register);
-            closer.register(onClose::run);
         }
         catch (IOException e) {
             throw new RuntimeException(e);

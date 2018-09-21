@@ -16,6 +16,8 @@ package com.facebook.presto.sql.planner.optimizations;
 import com.facebook.presto.sql.planner.SymbolsExtractor;
 import com.facebook.presto.sql.planner.plan.WindowNode;
 
+import java.util.Collection;
+
 public final class WindowNodeUtil
 {
     private WindowNodeUtil() {}
@@ -23,11 +25,11 @@ public final class WindowNodeUtil
     public static boolean dependsOn(WindowNode parent, WindowNode child)
     {
         return parent.getPartitionBy().stream().anyMatch(child.getCreatedSymbols()::contains)
-                || parent.getOrderBy().stream().anyMatch(child.getCreatedSymbols()::contains)
+                || (parent.getOrderingScheme().isPresent() && parent.getOrderingScheme().get().getOrderBy().stream().anyMatch(child.getCreatedSymbols()::contains))
                 || parent.getWindowFunctions().values().stream()
                 .map(WindowNode.Function::getFunctionCall)
                 .map(SymbolsExtractor::extractUnique)
-                .flatMap(symbols -> symbols.stream())
+                .flatMap(Collection::stream)
                 .anyMatch(child.getCreatedSymbols()::contains);
     }
 }

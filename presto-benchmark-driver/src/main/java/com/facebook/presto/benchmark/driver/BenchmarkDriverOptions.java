@@ -91,16 +91,18 @@ public class BenchmarkDriverOptions
                 parseServer(server),
                 user,
                 "presto-benchmark",
+                Optional.empty(),
                 ImmutableSet.of(),
                 null,
                 catalog,
                 schema,
+                null,
                 TimeZone.getDefault().getID(),
                 Locale.getDefault(),
+                ImmutableMap.of(),
                 toProperties(this.sessionProperties),
                 ImmutableMap.of(),
                 null,
-                debug,
                 clientRequestTimeout);
     }
 

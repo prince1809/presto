@@ -94,7 +94,8 @@ public class TaskResource
     private final TimeStat resultsRequestTime = new TimeStat();
 
     @Inject
-    public TaskResource(TaskManager taskManager,
+    public TaskResource(
+            TaskManager taskManager,
             SessionPropertyManager sessionPropertyManager,
             @ForAsyncHttp BoundedExecutor responseExecutor,
             @ForAsyncHttp ScheduledExecutorService timeoutExecutor)
@@ -129,7 +130,8 @@ public class TaskResource
                 taskId,
                 taskUpdateRequest.getFragment(),
                 taskUpdateRequest.getSources(),
-                taskUpdateRequest.getOutputIds());
+                taskUpdateRequest.getOutputIds(),
+                taskUpdateRequest.getTotalPartitions());
 
         if (shouldSummarize(uriInfo)) {
             taskInfo = taskInfo.summarize();
@@ -141,7 +143,8 @@ public class TaskResource
     @GET
     @Path("{taskId}")
     @Produces(MediaType.APPLICATION_JSON)
-    public void getTaskInfo(@PathParam("taskId") final TaskId taskId,
+    public void getTaskInfo(
+            @PathParam("taskId") final TaskId taskId,
             @HeaderParam(PRESTO_CURRENT_STATE) TaskState currentState,
             @HeaderParam(PRESTO_MAX_WAIT) Duration maxWait,
             @Context UriInfo uriInfo,
@@ -166,7 +169,7 @@ public class TaskResource
                 timeoutExecutor);
 
         if (shouldSummarize(uriInfo)) {
-            futureTaskInfo = Futures.transform(futureTaskInfo, TaskInfo::summarize);
+            futureTaskInfo = Futures.transform(futureTaskInfo, TaskInfo::summarize, directExecutor());
         }
 
         // For hard timeout, add an additional time to max wait for thread scheduling contention and GC
@@ -178,7 +181,8 @@ public class TaskResource
     @GET
     @Path("{taskId}/status")
     @Produces(MediaType.APPLICATION_JSON)
-    public void getTaskStatus(@PathParam("taskId") TaskId taskId,
+    public void getTaskStatus(
+            @PathParam("taskId") TaskId taskId,
             @HeaderParam(PRESTO_CURRENT_STATE) TaskState currentState,
             @HeaderParam(PRESTO_MAX_WAIT) Duration maxWait,
             @Context UriInfo uriInfo,
@@ -211,7 +215,8 @@ public class TaskResource
     @DELETE
     @Path("{taskId}")
     @Produces(MediaType.APPLICATION_JSON)
-    public TaskInfo deleteTask(@PathParam("taskId") TaskId taskId,
+    public TaskInfo deleteTask(
+            @PathParam("taskId") TaskId taskId,
             @QueryParam("abort") @DefaultValue("true") boolean abort,
             @Context UriInfo uriInfo)
     {
@@ -234,7 +239,8 @@ public class TaskResource
     @GET
     @Path("{taskId}/results/{bufferId}/{token}")
     @Produces(PRESTO_PAGES)
-    public void getResults(@PathParam("taskId") TaskId taskId,
+    public void getResults(
+            @PathParam("taskId") TaskId taskId,
             @PathParam("bufferId") OutputBufferId bufferId,
             @PathParam("token") final long token,
             @HeaderParam(PRESTO_MAX_SIZE) DataSize maxSize,
@@ -272,7 +278,7 @@ public class TaskResource
                     .header(PRESTO_PAGE_NEXT_TOKEN, result.getNextToken())
                     .header(PRESTO_BUFFER_COMPLETE, result.isBufferComplete())
                     .build();
-        });
+        }, directExecutor());
 
         // For hard timeout, add an additional time to max wait for thread scheduling contention and GC
         Duration timeout = new Duration(waitTime.toMillis() + ADDITIONAL_WAIT_TIME.toMillis(), MILLISECONDS);
@@ -287,6 +293,19 @@ public class TaskResource
 
         responseFuture.addListener(() -> readFromOutputBufferTime.add(Duration.nanosSince(start)), directExecutor());
         asyncResponse.register((CompletionCallback) throwable -> resultsRequestTime.add(Duration.nanosSince(start)));
+    }
+
+    @GET
+    @Path("{taskId}/results/{bufferId}/{token}/acknowledge")
+    public void acknowledgeResults(
+            @PathParam("taskId") TaskId taskId,
+            @PathParam("bufferId") OutputBufferId bufferId,
+            @PathParam("token") final long token)
+    {
+        requireNonNull(taskId, "taskId is null");
+        requireNonNull(bufferId, "bufferId is null");
+
+        taskManager.acknowledgeTaskResults(taskId, bufferId, token);
     }
 
     @DELETE

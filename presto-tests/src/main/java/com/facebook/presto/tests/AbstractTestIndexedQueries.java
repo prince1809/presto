@@ -52,6 +52,19 @@ public abstract class AbstractTestIndexedQueries
     }
 
     @Test
+    public void testExplainAnalyzeIndexJoin()
+    {
+        assertQuerySucceeds(getSession(), "EXPLAIN ANALYZE " +
+                " SELECT *\n" +
+                "FROM (\n" +
+                "  SELECT *\n" +
+                "  FROM lineitem\n" +
+                "  WHERE partkey % 8 = 0) l\n" +
+                "JOIN orders o\n" +
+                "  ON l.orderkey = o.orderkey");
+    }
+
+    @Test
     public void testBasicIndexJoin()
     {
         assertQuery("" +
@@ -115,6 +128,12 @@ public abstract class AbstractTestIndexedQueries
                 "  WHERE partkey % 8 = 0) l\n" +
                 "JOIN orders o\n" +
                 "  ON l.orderstatus = o.orderstatus AND l.orderkey = o.orderkey");
+    }
+
+    @Test
+    public void testJoinWithNonJoinExpression()
+    {
+        assertQuery("SELECT COUNT(*) FROM lineitem JOIN orders ON lineitem.orderkey = orders.orderkey AND orders.custkey = 1");
     }
 
     @Test

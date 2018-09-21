@@ -13,51 +13,123 @@
  */
 package com.facebook.presto.cost;
 
-import com.facebook.presto.spi.statistics.Estimate;
+import com.facebook.presto.spi.type.FixedWidthType;
+import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.spi.type.VariableWidthType;
+import com.facebook.presto.sql.planner.Symbol;
+import com.facebook.presto.sql.planner.TypeProvider;
+import org.pcollections.HashTreePMap;
+import org.pcollections.PMap;
 
+import java.util.Collection;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
-import static com.facebook.presto.spi.statistics.Estimate.unknownValue;
+import static com.facebook.presto.util.MoreMath.firstNonNaN;
+import static com.google.common.base.MoreObjects.toStringHelper;
+import static com.google.common.base.Preconditions.checkArgument;
+import static java.lang.Double.NaN;
+import static java.lang.Double.isNaN;
 import static java.util.Objects.requireNonNull;
 
 public class PlanNodeStatsEstimate
 {
+    private static final double DEFAULT_DATA_SIZE_PER_COLUMN = 50;
     public static final PlanNodeStatsEstimate UNKNOWN_STATS = builder().build();
 
-    private final Estimate outputRowCount;
-    private final Estimate outputSizeInBytes;
+    private final double outputRowCount;
+    private final PMap<Symbol, SymbolStatsEstimate> symbolStatistics;
 
-    private PlanNodeStatsEstimate(Estimate outputRowCount, Estimate outputSizeInBytes)
+    private PlanNodeStatsEstimate(double outputRowCount, PMap<Symbol, SymbolStatsEstimate> symbolStatistics)
     {
-        this.outputRowCount = requireNonNull(outputRowCount, "outputRowCount can not be null");
-        this.outputSizeInBytes = requireNonNull(outputSizeInBytes, "outputSizeInBytes can not be null");
+        checkArgument(isNaN(outputRowCount) || outputRowCount >= 0, "outputRowCount cannot be negative");
+        this.outputRowCount = outputRowCount;
+        this.symbolStatistics = symbolStatistics;
     }
 
-    public Estimate getOutputRowCount()
+    /**
+     * Returns estimated number of rows.
+     * Unknown value is represented by {@link Double#NaN}
+     */
+    public double getOutputRowCount()
     {
         return outputRowCount;
     }
 
-    public Estimate getOutputSizeInBytes()
+    /**
+     * Returns estimated data size.
+     * Unknown value is represented by {@link Double#NaN}
+     */
+    public double getOutputSizeInBytes(Collection<Symbol> outputSymbols, TypeProvider types)
     {
-        return outputSizeInBytes;
+        requireNonNull(outputSymbols, "outputSymbols is null");
+
+        return outputSymbols.stream()
+                .mapToDouble(symbol -> getOutputSizeForSymbol(getSymbolStatistics(symbol), types.get(symbol)))
+                .sum();
+    }
+
+    private double getOutputSizeForSymbol(SymbolStatsEstimate symbolStatistics, Type type)
+    {
+        checkArgument(type != null, "type is null");
+
+        double averageRowSize = symbolStatistics.getAverageRowSize();
+        double nullsFraction = firstNonNaN(symbolStatistics.getNullsFraction(), 0d);
+        double numberOfNonNullRows = outputRowCount * (1.0 - nullsFraction);
+
+        if (isNaN(averageRowSize)) {
+            if (type instanceof FixedWidthType) {
+                averageRowSize = ((FixedWidthType) type).getFixedSize();
+            }
+            else {
+                averageRowSize = DEFAULT_DATA_SIZE_PER_COLUMN;
+            }
+        }
+
+        double outputSize = numberOfNonNullRows * averageRowSize;
+
+        // account for "is null" boolean array
+        outputSize += outputRowCount * Byte.BYTES;
+
+        // account for offsets array for variable width types
+        if (type instanceof VariableWidthType) {
+            outputSize += outputRowCount * Integer.BYTES;
+        }
+
+        return outputSize;
     }
 
     public PlanNodeStatsEstimate mapOutputRowCount(Function<Double, Double> mappingFunction)
     {
-        return buildFrom(this).setOutputRowCount(outputRowCount.map(mappingFunction)).build();
+        return buildFrom(this).setOutputRowCount(mappingFunction.apply(outputRowCount)).build();
     }
 
-    public PlanNodeStatsEstimate mapOutputSizeInBytes(Function<Double, Double> mappingFunction)
+    public PlanNodeStatsEstimate mapSymbolColumnStatistics(Symbol symbol, Function<SymbolStatsEstimate, SymbolStatsEstimate> mappingFunction)
     {
-        return buildFrom(this).setOutputSizeInBytes(outputRowCount.map(mappingFunction)).build();
+        return buildFrom(this)
+                .addSymbolStatistics(symbol, mappingFunction.apply(getSymbolStatistics(symbol)))
+                .build();
+    }
+
+    public SymbolStatsEstimate getSymbolStatistics(Symbol symbol)
+    {
+        return symbolStatistics.getOrDefault(symbol, SymbolStatsEstimate.UNKNOWN_STATS);
+    }
+
+    public Set<Symbol> getSymbolsWithKnownStatistics()
+    {
+        return symbolStatistics.keySet();
     }
 
     @Override
     public String toString()
     {
-        return "PlanNodeStatsEstimate{outputRowCount=" + outputRowCount + ", outputSizeInBytes=" + outputSizeInBytes + '}';
+        return toStringHelper(this)
+                .add("outputRowCount", outputRowCount)
+                .add("symbolStatistics", symbolStatistics)
+                .toString();
     }
 
     @Override
@@ -70,14 +142,14 @@ public class PlanNodeStatsEstimate
             return false;
         }
         PlanNodeStatsEstimate that = (PlanNodeStatsEstimate) o;
-        return Objects.equals(outputRowCount, that.outputRowCount) &&
-                Objects.equals(outputSizeInBytes, that.outputSizeInBytes);
+        return Double.compare(outputRowCount, that.outputRowCount) == 0 &&
+                Objects.equals(symbolStatistics, that.symbolStatistics);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(outputRowCount, outputSizeInBytes);
+        return Objects.hash(outputRowCount, symbolStatistics);
     }
 
     public static Builder builder()
@@ -87,30 +159,52 @@ public class PlanNodeStatsEstimate
 
     public static Builder buildFrom(PlanNodeStatsEstimate other)
     {
-        return builder().setOutputRowCount(other.getOutputRowCount())
-                .setOutputSizeInBytes(other.getOutputSizeInBytes());
+        return new Builder(other.getOutputRowCount(), other.symbolStatistics);
     }
 
     public static final class Builder
     {
-        private Estimate outputRowCount = unknownValue();
-        private Estimate outputSizeInBytes = unknownValue();
+        private double outputRowCount;
+        private PMap<Symbol, SymbolStatsEstimate> symbolStatistics;
 
-        public Builder setOutputRowCount(Estimate outputRowCount)
+        public Builder()
+        {
+            this(NaN, HashTreePMap.empty());
+        }
+
+        private Builder(double outputRowCount, PMap<Symbol, SymbolStatsEstimate> symbolStatistics)
+        {
+            this.outputRowCount = outputRowCount;
+            this.symbolStatistics = symbolStatistics;
+        }
+
+        public Builder setOutputRowCount(double outputRowCount)
         {
             this.outputRowCount = outputRowCount;
             return this;
         }
 
-        public Builder setOutputSizeInBytes(Estimate outputSizeInBytes)
+        public Builder addSymbolStatistics(Symbol symbol, SymbolStatsEstimate statistics)
         {
-            this.outputSizeInBytes = outputSizeInBytes;
+            symbolStatistics = symbolStatistics.plus(symbol, statistics);
+            return this;
+        }
+
+        public Builder addSymbolStatistics(Map<Symbol, SymbolStatsEstimate> symbolStatistics)
+        {
+            this.symbolStatistics = this.symbolStatistics.plusAll(symbolStatistics);
+            return this;
+        }
+
+        public Builder removeSymbolStatistics(Symbol symbol)
+        {
+            symbolStatistics = symbolStatistics.minus(symbol);
             return this;
         }
 
         public PlanNodeStatsEstimate build()
         {
-            return new PlanNodeStatsEstimate(outputRowCount, outputSizeInBytes);
+            return new PlanNodeStatsEstimate(outputRowCount, symbolStatistics);
         }
     }
 }

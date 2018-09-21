@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.operator;
 
+import com.facebook.presto.execution.Lifespan;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.json.JsonCodec;
@@ -30,6 +31,8 @@ import static org.testng.Assert.assertEquals;
 public class TestDriverStats
 {
     public static final DriverStats EXPECTED = new DriverStats(
+            Lifespan.driverGroup(21),
+
             new DateTime(1),
             new DateTime(2),
             new DateTime(3),
@@ -43,7 +46,6 @@ public class TestDriverStats
 
             new Duration(9, NANOSECONDS),
             new Duration(10, NANOSECONDS),
-            new Duration(11, NANOSECONDS),
             new Duration(12, NANOSECONDS),
             false,
             ImmutableSet.of(),
@@ -75,19 +77,20 @@ public class TestDriverStats
 
     public static void assertExpectedDriverStats(DriverStats actual)
     {
+        assertEquals(actual.getLifespan(), Lifespan.driverGroup(21));
+
         assertEquals(actual.getCreateTime(), new DateTime(1, UTC));
         assertEquals(actual.getStartTime(), new DateTime(2, UTC));
         assertEquals(actual.getEndTime(), new DateTime(3, UTC));
         assertEquals(actual.getQueuedTime(), new Duration(4, NANOSECONDS));
         assertEquals(actual.getElapsedTime(), new Duration(5, NANOSECONDS));
 
-        assertEquals(actual.getMemoryReservation(), new DataSize(6, BYTE));
+        assertEquals(actual.getUserMemoryReservation(), new DataSize(6, BYTE));
         assertEquals(actual.getRevocableMemoryReservation(), new DataSize(7, BYTE));
         assertEquals(actual.getSystemMemoryReservation(), new DataSize(8, BYTE));
 
         assertEquals(actual.getTotalScheduledTime(), new Duration(9, NANOSECONDS));
         assertEquals(actual.getTotalCpuTime(), new Duration(10, NANOSECONDS));
-        assertEquals(actual.getTotalUserTime(), new Duration(11, NANOSECONDS));
         assertEquals(actual.getTotalBlockedTime(), new Duration(12, NANOSECONDS));
 
         assertEquals(actual.getRawInputDataSize(), new DataSize(13, BYTE));

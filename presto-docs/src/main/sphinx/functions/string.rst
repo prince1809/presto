@@ -118,6 +118,13 @@ String Functions
     ``entryDelimiter`` splits ``string`` into key-value pairs. ``keyValueDelimiter`` splits
     each pair into key and value.
 
+.. function:: split_to_multimap(string, entryDelimiter, keyValueDelimiter) -> map<varchar, array<varchar>>
+
+    Splits ``string`` by ``entryDelimiter`` and ``keyValueDelimiter`` and returns a map
+    containing an array of values for each unique key. ``entryDelimiter`` splits ``string``
+    into key-value pairs. ``keyValueDelimiter`` splits each pair into key and value. The
+    values for each key will be in the same order as they appeared in ``string``.
+
 .. function:: strpos(string, substring) -> bigint
 
     Returns the starting position of the first instance of ``substring`` in
@@ -147,6 +154,14 @@ String Functions
 .. function:: upper(string) -> varchar
 
     Converts ``string`` to uppercase.
+
+.. function:: word_stem(word) -> varchar
+
+    Returns the stem of ``word`` in the English language.
+
+.. function:: word_stem(word, lang) -> varchar
+
+    Returns the stem of ``word`` in the ``lang`` language.
 
 Unicode Functions
 -----------------

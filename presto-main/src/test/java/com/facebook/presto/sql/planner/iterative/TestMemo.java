@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.sql.planner.iterative;
 
+import com.facebook.presto.cost.PlanNodeCostEstimate;
+import com.facebook.presto.cost.PlanNodeStatsEstimate;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
 import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.planner.plan.PlanNode;
@@ -21,7 +23,9 @@ import com.google.common.collect.ImmutableList;
 import org.testng.annotations.Test;
 
 import java.util.List;
+import java.util.Optional;
 
+import static com.google.common.collect.Iterables.getOnlyElement;
 import static org.testng.Assert.assertEquals;
 
 public class TestMemo
@@ -55,6 +59,29 @@ public class TestMemo
         memo.replace(getChildGroup(memo, memo.getRootGroup()), transformed, "rule");
         assertEquals(memo.getGroupCount(), 3);
         assertMatchesStructure(memo.extract(), node(plan.getId(), transformed));
+    }
+
+    /*
+      From: X -> Y  -> Z
+      To:   X -> Y' -> Z
+     */
+    @Test
+    public void testReplaceNode()
+    {
+        PlanNode z = node();
+        PlanNode y = node(z);
+        PlanNode x = node(y);
+
+        Memo memo = new Memo(idAllocator, x);
+        assertEquals(memo.getGroupCount(), 3);
+
+        // replace child of root node with another node, retaining child's child
+        int yGroup = getChildGroup(memo, memo.getRootGroup());
+        GroupReference zRef = (GroupReference) getOnlyElement(memo.getNode(yGroup).getSources());
+        PlanNode transformed = node(zRef);
+        memo.replace(yGroup, transformed, "rule");
+        assertEquals(memo.getGroupCount(), 3);
+        assertMatchesStructure(memo.extract(), node(x.getId(), node(transformed.getId(), z)));
     }
 
     /*
@@ -176,6 +203,54 @@ public class TestMemo
                 node(newX.getId(),
                         node(y1.getId(), node(z.getId())),
                         node(y2.getId(), node(z.getId()))));
+    }
+
+    @Test
+    public void testEvictStatsOnReplace()
+    {
+        PlanNode y = node();
+        PlanNode x = node(y);
+
+        Memo memo = new Memo(idAllocator, x);
+        int xGroup = memo.getRootGroup();
+        int yGroup = getChildGroup(memo, memo.getRootGroup());
+        PlanNodeStatsEstimate xStats = PlanNodeStatsEstimate.builder().setOutputRowCount(42).build();
+        PlanNodeStatsEstimate yStats = PlanNodeStatsEstimate.builder().setOutputRowCount(55).build();
+
+        memo.storeStats(yGroup, yStats);
+        memo.storeStats(xGroup, xStats);
+
+        assertEquals(memo.getStats(yGroup), Optional.of(yStats));
+        assertEquals(memo.getStats(xGroup), Optional.of(xStats));
+
+        memo.replace(yGroup, node(), "rule");
+
+        assertEquals(memo.getStats(yGroup), Optional.empty());
+        assertEquals(memo.getStats(xGroup), Optional.empty());
+    }
+
+    @Test
+    public void testEvictCostOnReplace()
+    {
+        PlanNode y = node();
+        PlanNode x = node(y);
+
+        Memo memo = new Memo(idAllocator, x);
+        int xGroup = memo.getRootGroup();
+        int yGroup = getChildGroup(memo, memo.getRootGroup());
+        PlanNodeCostEstimate yCost = PlanNodeCostEstimate.cpuCost(42);
+        PlanNodeCostEstimate xCost = yCost.add(PlanNodeCostEstimate.networkCost(37));
+
+        memo.storeCumulativeCost(yGroup, yCost);
+        memo.storeCumulativeCost(xGroup, xCost);
+
+        assertEquals(memo.getCumulativeCost(yGroup), Optional.of(yCost));
+        assertEquals(memo.getCumulativeCost(xGroup), Optional.of(xCost));
+
+        memo.replace(yGroup, node(), "rule");
+
+        assertEquals(memo.getCumulativeCost(yGroup), Optional.empty());
+        assertEquals(memo.getCumulativeCost(xGroup), Optional.empty());
     }
 
     private static void assertMatchesStructure(PlanNode actual, PlanNode expected)

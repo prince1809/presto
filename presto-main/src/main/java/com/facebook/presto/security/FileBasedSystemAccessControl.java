@@ -20,8 +20,11 @@ import com.facebook.presto.spi.security.Identity;
 import com.facebook.presto.spi.security.Privilege;
 import com.facebook.presto.spi.security.SystemAccessControl;
 import com.facebook.presto.spi.security.SystemAccessControlFactory;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import io.airlift.json.ObjectMapperProvider;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -36,8 +39,9 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import static com.facebook.presto.spi.security.AccessDeniedException.denyCatalogAccess;
+import static com.facebook.presto.spi.security.AccessDeniedException.denySetUser;
 import static com.google.common.base.Preconditions.checkState;
-import static io.airlift.json.JsonCodec.jsonCodec;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 public class FileBasedSystemAccessControl
@@ -46,16 +50,18 @@ public class FileBasedSystemAccessControl
     public static final String NAME = "file";
 
     private final List<CatalogAccessControlRule> catalogRules;
+    private final Optional<List<PrincipalUserMatchRule>> principalUserMatchRules;
 
-    private FileBasedSystemAccessControl(List<CatalogAccessControlRule> catalogRules)
+    private FileBasedSystemAccessControl(List<CatalogAccessControlRule> catalogRules, Optional<List<PrincipalUserMatchRule>> principalUserMatchRules)
     {
         this.catalogRules = catalogRules;
+        this.principalUserMatchRules = principalUserMatchRules;
     }
 
     public static class Factory
             implements SystemAccessControlFactory
     {
-        private static final String CONFIG_FILE_NAME = "security.config-file";
+        static final String CONFIG_FILE_NAME = "security.config-file";
 
         @Override
         public String getName()
@@ -80,10 +86,10 @@ public class FileBasedSystemAccessControl
                 }
                 path.toFile().canRead();
 
+                FileBasedSystemAccessControlRules rules = parse(Files.readAllBytes(path));
+
                 ImmutableList.Builder<CatalogAccessControlRule> catalogRulesBuilder = ImmutableList.builder();
-                catalogRulesBuilder.addAll(jsonCodec(FileBasedSystemAccessControlRules.class)
-                        .fromJson(Files.readAllBytes(path))
-                        .getCatalogRules());
+                catalogRulesBuilder.addAll(rules.getCatalogRules());
 
                 // Hack to allow Presto Admin to access the "system" catalog for retrieving server status.
                 // todo Change userRegex from ".*" to one particular user that Presto Admin will be restricted to run as
@@ -92,7 +98,7 @@ public class FileBasedSystemAccessControl
                         Optional.of(Pattern.compile(".*")),
                         Optional.of(Pattern.compile("system"))));
 
-                return new FileBasedSystemAccessControl(catalogRulesBuilder.build());
+                return new FileBasedSystemAccessControl(catalogRulesBuilder.build(), rules.getPrincipalUserMatchRules());
             }
             catch (SecurityException | IOException | InvalidPathException e) {
                 throw new RuntimeException(e);
@@ -100,9 +106,46 @@ public class FileBasedSystemAccessControl
         }
     }
 
-    @Override
-    public void checkCanSetUser(Principal principal, String userName)
+    private static FileBasedSystemAccessControlRules parse(byte[] json)
     {
+        ObjectMapper mapper = new ObjectMapperProvider().get()
+                .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        Class<FileBasedSystemAccessControlRules> javaType = FileBasedSystemAccessControlRules.class;
+        try {
+            return mapper.readValue(json, javaType);
+        }
+        catch (IOException e) {
+            throw new IllegalArgumentException(format("Invalid JSON string for %s", javaType), e);
+        }
+    }
+
+    @Override
+    public void checkCanSetUser(Optional<Principal> principal, String userName)
+    {
+        requireNonNull(principal, "principal is null");
+        requireNonNull(userName, "userName is null");
+
+        if (!principalUserMatchRules.isPresent()) {
+            return;
+        }
+
+        if (!principal.isPresent()) {
+            denySetUser(principal, userName);
+        }
+
+        String principalName = principal.get().getName();
+
+        for (PrincipalUserMatchRule rule : principalUserMatchRules.get()) {
+            Optional<Boolean> allowed = rule.match(principalName, userName);
+            if (allowed.isPresent()) {
+                if (allowed.get()) {
+                    return;
+                }
+                denySetUser(principal, userName);
+            }
+        }
+
+        denySetUser(principal, userName);
     }
 
     @Override
@@ -217,7 +260,7 @@ public class FileBasedSystemAccessControl
     }
 
     @Override
-    public void checkCanSelectFromTable(Identity identity, CatalogSchemaTableName table)
+    public void checkCanSelectFromColumns(Identity identity, CatalogSchemaTableName table, Set<String> columns)
     {
     }
 
@@ -242,17 +285,7 @@ public class FileBasedSystemAccessControl
     }
 
     @Override
-    public void checkCanSelectFromView(Identity identity, CatalogSchemaTableName view)
-    {
-    }
-
-    @Override
-    public void checkCanCreateViewWithSelectFromTable(Identity identity, CatalogSchemaTableName table)
-    {
-    }
-
-    @Override
-    public void checkCanCreateViewWithSelectFromView(Identity identity, CatalogSchemaTableName view)
+    public void checkCanCreateViewWithSelectFromColumns(Identity identity, CatalogSchemaTableName table, Set<String> columns)
     {
     }
 
